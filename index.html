@@ -622,36 +622,41 @@ function toast(msg, color='var(--a1)') {
 
 // ════════════════════════════════════════════════════════
 // FIRESTORE CRUD
+// All Firebase references resolved lazily at call-time via
+// window.FB so we never destructure before the module fires.
 // ════════════════════════════════════════════════════════
-const {db, doc, setDoc, getDoc, collection, getDocs, updateDoc, deleteDoc, query, where, serverTimestamp, writeBatch} = window.FB || {};
-
-function userCol(col) { return collection(db, 'users', D.uid, col); }
-function userDoc(col, id) { return doc(db, 'users', D.uid, col, id); }
+function _db()  { return window.FB?.db; }
+function _uid() { return D.uid; }
+function userCol(col) { return window.FB.collection(_db(), 'users', _uid(), col); }
+function userDoc(col, id) { return window.FB.doc(_db(), 'users', _uid(), col, id); }
 
 async function fsSet(col, id, data) {
+  if(!_db()||!_uid()) { saveLocal(); return; }
   try {
-    await setDoc(userDoc(col,id), {...data, updatedAt: serverTimestamp()});
+    await window.FB.setDoc(userDoc(col,id), {...data, updatedAt: window.FB.serverTimestamp()});
     LS.set(col+'_'+id, data);
   } catch(e) { LS.set(col+'_'+id, data); toast('⚠️ Saved offline','var(--a3)'); }
 }
 
 async function fsDel(col, id) {
-  try { await deleteDoc(userDoc(col,id)); }
+  if(!_db()||!_uid()) return;
+  try { await window.FB.deleteDoc(userDoc(col,id)); }
   catch(e) { toast('⚠️ Delete queued','var(--a3)'); }
   LS.set(col+'_'+id, null);
 }
 
 async function fsLoadAll() {
   const cols = ['txns','accounts','budgets','loans','investments','goals'];
+  if(!_db()||!_uid()) { loadLocal(); return; }
   try {
     toast('☁️ Loading from Firebase...','var(--a2)');
-    const snaps = await Promise.all(cols.map(c => getDocs(userCol(c))));
+    const snaps = await Promise.all(cols.map(c => window.FB.getDocs(userCol(c))));
     cols.forEach((c,i) => {
       const docs = snaps[i].docs.map(d=>({id:d.id,...d.data()}));
       D[c] = docs.length ? docs : DEF[c];
     });
     // Load profile
-    const prof = await getDoc(userDoc('profile','main'));
+    const prof = await window.FB.getDoc(userDoc('profile','main'));
     if(prof.exists()) {
       const p=prof.data();
       D.userName=p.name||D.userName; D.cur=p.currency||D.cur;
@@ -668,10 +673,10 @@ async function fsLoadAll() {
 }
 
 async function seedUser() {
-  if(!db||!D.uid) return;
+  if(!_db()||!_uid()) return;
   toast('🌱 Setting up your account...','var(--a2)');
   try {
-    const batch = writeBatch(db);
+    const batch = window.FB.writeBatch(_db());
     DEF.txns.forEach(t=>batch.set(userDoc('txns',t.id),t));
     DEF.accounts.forEach(a=>batch.set(userDoc('accounts',a.id),a));
     DEF.budgets.forEach(b=>batch.set(userDoc('budgets',b.id),b));
