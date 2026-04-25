@@ -1021,24 +1021,29 @@ async function fsLoadAll() {
   try {
     const cols = Object.keys(COLLECTIONS);
     const snaps = await Promise.all(cols.map(c => window.FB.getDocs(userCol(c))));
-    let hasData = false;
+
+    // Load each collection — empty Firestore means user has zero items, NOT "load defaults"
     cols.forEach((c, i) => {
-      const docs = snaps[i].docs.map(d => ({ id: d.id, ...d.data() }));
-      if (docs.length) { state[c] = docs; hasData = true; }
-      else             { state[c] = [...(DEFAULTS[c] || [])]; }
+      state[c] = snaps[i].docs.map(d => ({ id: d.id, ...d.data() }));
     });
-    // Profile doc
+
+    // Profile doc holds the "initialized" flag
     const profSnap = await window.FB.getDoc(userDoc('meta', 'profile'));
+    let isInitialized = false;
     if (profSnap.exists()) {
       const p = profSnap.data();
-      state.userName = p.userName || state.userName;
-      state.currency = p.currency || state.currency;
-      state.income   = p.income   || state.income;
-      state.cats     = p.cats     || state.cats;
+      state.userName  = p.userName || state.userName;
+      state.currency  = p.currency || state.currency;
+      state.income    = p.income   || state.income;
+      state.cats      = p.cats     || state.cats;
+      isInitialized   = !!p.initialized;
     }
+
     saveAllLocal();
-    // Seed if brand new
-    if (!hasData) await seedUser();
+
+    // Only seed defaults the FIRST time a user signs up.
+    // After that, an empty Firestore means "user cleared their data" — leave it empty.
+    if (!isInitialized) await seedUser();
   } catch (e) {
     console.warn('fsLoadAll failed, using local:', e);
     loadAllLocal();
@@ -1054,8 +1059,10 @@ async function seedUser() {
       (DEFAULTS[c] || []).forEach(item => batch.set(userDoc(c, item.id), item));
       state[c] = [...(DEFAULTS[c] || [])];
     });
+    // Mark this user as initialized so empty Firestore in the future = "user reset", not "new user"
     batch.set(userDoc('meta', 'profile'), {
       userName: state.userName, currency: state.currency, income: state.income, cats: state.cats,
+      initialized: true,
     });
     await batch.commit();
     saveAllLocal();
@@ -1068,6 +1075,7 @@ async function saveProfileToFirestore() {
   try {
     await window.FB.setDoc(userDoc('meta', 'profile'), {
       userName: state.userName, currency: state.currency, income: state.income, cats: state.cats,
+      initialized: true,
     });
   } catch (e) { console.warn('profile save failed:', e); }
 }
@@ -1109,6 +1117,8 @@ async function resetAllData() {
   Object.keys(COLLECTIONS).forEach(c => state[c] = []);
   if (state.uid) {
     for (const col of Object.keys(COLLECTIONS)) await fsDeleteAll(col);
+    // Preserve the initialized flag on profile so empty Firestore doesn't trigger re-seed on reload
+    await saveProfileToFirestore();
   }
   Object.keys(COLLECTIONS).forEach(c => LS.del(c));
   saveAllLocal();
